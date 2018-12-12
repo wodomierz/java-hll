@@ -16,24 +16,31 @@ package net.agkn.hll;
  * limitations under the License.
  */
 
-import it.unimi.dsi.fastutil.ints.Int2ByteOpenHashMap;
-import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
-import net.agkn.hll.serialization.*;
-import net.agkn.hll.util.*;
-
 import java.util.Arrays;
 
-import static net.agkn.hll.HLLType.FULL;
+import it.unimi.dsi.fastutil.ints.Int2ByteOpenHashMap;
+import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
+import net.agkn.hll.serialization.HLLMetadata;
+import net.agkn.hll.serialization.IHLLMetadata;
+import net.agkn.hll.serialization.ISchemaVersion;
+import net.agkn.hll.serialization.IWordDeserializer;
+import net.agkn.hll.serialization.IWordSerializer;
+import net.agkn.hll.serialization.SerializationUtil;
+import net.agkn.hll.util.BitVector;
+import net.agkn.hll.util.BitUtil;
+import net.agkn.hll.util.HLLUtil;
+import net.agkn.hll.util.LongIterator;
+import net.agkn.hll.util.NumberUtil;
 
 /**
  * A probabilistic set of hashed <code>long</code> elements. Useful for computing
  * the approximate cardinality of a stream of data in very small storage.<p/>
- * <p>
+ *
  * A modified version of the <a href="http://algo.inria.fr/flajolet/Publications/FlFuGaMe07.pdf">
  * 'HyperLogLog' data structure and algorithm</a> is used, which combines both
  * probabilistic and non-probabilistic techniques to improve the accuracy and
  * storage requirements of the original algorithm.<p/>
- * <p>
+ *
  * More specifically, initializing and storing a new {@link HLL} will
  * allocate a sentinel value symbolizing the empty set ({@link HLLType#EMPTY}).
  * After adding the first few values, a sorted list of unique integers is
@@ -42,11 +49,11 @@ import static net.agkn.hll.HLLType.FULL;
  * "promoted" to a "{@link HLLType#SPARSE}" map-based HyperLogLog structure.
  * Finally, when enough registers are set, the map-based HLL will be converted
  * to a bit-packed "{@link HLLType#FULL}" HyperLogLog structure.<p/>
- * <p>
+ *
  * This data structure is interoperable with the implementations found at:
  * <ul>
- * <li><a href="https://github.com/aggregateknowledge/postgresql-hll">postgresql-hll</a>, and</li>
- * <li><a href="https://github.com/aggregateknowledge/js-hll">js-hll</a></li>
+ *   <li><a href="https://github.com/aggregateknowledge/postgresql-hll">postgresql-hll</a>, and</li>
+ *   <li><a href="https://github.com/aggregateknowledge/js-hll">js-hll</a></li>
  * </ul>
  * when <a href="https://github.com/aggregateknowledge/postgresql-hll/blob/master/STORAGE.markdown">properly serialized</a>.
  *
@@ -137,40 +144,39 @@ public class HLL implements Cloneable {
     private final double largeEstimatorCutoff;
 
     // ========================================================================
-
     /**
      * NOTE: Arguments here are named and structured identically to those in the
-     * PostgreSQL implementation, which can be found
-     * <a href="https://github.com/aggregateknowledge/postgresql-hll/blob/master/README.markdown#explanation-of-parameters-and-tuning">here</a>.
+     *       PostgreSQL implementation, which can be found
+     *       <a href="https://github.com/aggregateknowledge/postgresql-hll/blob/master/README.markdown#explanation-of-parameters-and-tuning">here</a>.
      *
-     * @param log2m     log-base-2 of the number of registers used in the HyperLogLog
-     *                  algorithm. Must be at least 4 and at most 30.
-     * @param regwidth  number of bits used per register in the HyperLogLog
-     *                  algorithm. Must be at least 1 and at most 8.
+     * @param log2m log-base-2 of the number of registers used in the HyperLogLog
+     *        algorithm. Must be at least 4 and at most 30.
+     * @param regwidth number of bits used per register in the HyperLogLog
+     *        algorithm. Must be at least 1 and at most 8.
      * @param expthresh tunes when the {@link HLLType#EXPLICIT} to
-     *                  {@link HLLType#SPARSE} promotion occurs,
-     *                  based on the set's cardinality. Must be at least -1 and at most 18.
-     *                  <table>
-     *                  <thead><tr><th><code>expthresh</code> value</th><th>Meaning</th></tr></thead>
-     *                  <tbody>
-     *                  <tr>
-     *                  <td>-1</td>
-     *                  <td>Promote at whatever cutoff makes sense for optimal memory usage. ('auto' mode)</td>
-     *                  </tr>
-     *                  <tr>
-     *                  <td>0</td>
-     *                  <td>Skip <code>EXPLICIT</code> representation in hierarchy.</td>
-     *                  </tr>
-     *                  <tr>
-     *                  <td>1-18</td>
-     *                  <td>Promote at 2<sup>expthresh - 1</sup> cardinality</td>
-     *                  </tr>
-     *                  </tbody>
-     *                  </table>
-     * @param sparseon  Flag indicating if the {@link HLLType#SPARSE}
-     *                  representation should be used.
-     * @param type      the type in the promotion hierarchy which this instance should
-     *                  start at. This cannot be <code>null</code>.
+     *        {@link HLLType#SPARSE} promotion occurs,
+     *        based on the set's cardinality. Must be at least -1 and at most 18.
+     *        <table>
+     *        <thead><tr><th><code>expthresh</code> value</th><th>Meaning</th></tr></thead>
+     *        <tbody>
+     *        <tr>
+     *            <td>-1</td>
+     *            <td>Promote at whatever cutoff makes sense for optimal memory usage. ('auto' mode)</td>
+     *        </tr>
+     *        <tr>
+     *            <td>0</td>
+     *            <td>Skip <code>EXPLICIT</code> representation in hierarchy.</td>
+     *        </tr>
+     *        <tr>
+     *            <td>1-18</td>
+     *            <td>Promote at 2<sup>expthresh - 1</sup> cardinality</td>
+     *        </tr>
+     *        </tbody>
+     *        </table>
+     * @param sparseon Flag indicating if the {@link HLLType#SPARSE}
+     *        representation should be used.
+     * @param type the type in the promotion hierarchy which this instance should
+     *        start at. This cannot be <code>null</code>.
      */
     public HLL(final int log2m, final int regwidth, final int expthresh, final boolean sparseon, final HLLType type) {
         this.log2m = log2m;
@@ -232,14 +238,15 @@ public class HLL implements Cloneable {
     }
 
     /**
-     * Construct an empty HLL with the given {@code log2m} and {@code regwidth}.<p/>
-     * <p>
-     * This is equivalent to calling <code>HLL(log2m, regwidth, -1, true, HLLType.EMPTY)</code>.
+     *  Construct an empty HLL with the given {@code log2m} and {@code regwidth}.<p/>
      *
-     * @param log2m    log-base-2 of the number of registers used in the HyperLogLog
-     *                 algorithm. Must be at least 4 and at most 30.
+     *  This is equivalent to calling <code>HLL(log2m, regwidth, -1, true, HLLType.EMPTY)</code>.
+     *
+     * @param log2m log-base-2 of the number of registers used in the HyperLogLog
+     *        algorithm. Must be at least 4 and at most 30.
      * @param regwidth number of bits used per register in the HyperLogLog
-     *                 algorithm. Must be at least 1 and at most 8.
+     *        algorithm. Must be at least 1 and at most 8.
+     *
      * @see #HLL(int, int, int, boolean, HLLType)
      */
     public HLL(final int log2m, final int regwidth) {
@@ -247,23 +254,22 @@ public class HLL implements Cloneable {
     }
 
     // -------------------------------------------------------------------------
-
     /**
      * Convenience constructor for testing. Assumes that both {@link HLLType#EXPLICIT}
      * and {@link HLLType#SPARSE} representations should be enabled.
      *
-     * @param log2m             log-base-2 of the number of registers used in the HyperLogLog
-     *                          algorithm. Must be at least 4 and at most 30.
-     * @param regwidth          number of bits used per register in the HyperLogLog
-     *                          algorithm. Must be at least 1 and at most 8.
+     * @param log2m log-base-2 of the number of registers used in the HyperLogLog
+     *        algorithm. Must be at least 4 and at most 30.
+     * @param regwidth number of bits used per register in the HyperLogLog
+     *        algorithm. Must be at least 1 and at most 8.
      * @param explicitThreshold cardinality threshold at which the {@link HLLType#EXPLICIT}
-     *                          representation should be promoted to {@link HLLType#SPARSE}.
-     *                          This must be greater than zero and less than or equal to {@value #MAXIMUM_EXPLICIT_THRESHOLD}.
-     * @param sparseThreshold   register count threshold at which the {@link HLLType#SPARSE}
-     *                          representation should be promoted to {@link HLLType#FULL}.
-     *                          This must be greater than zero.
-     * @param type              the type in the promotion hierarchy which this instance should
-     *                          start at. This cannot be <code>null</code>.
+     *        representation should be promoted to {@link HLLType#SPARSE}.
+     *        This must be greater than zero and less than or equal to {@value #MAXIMUM_EXPLICIT_THRESHOLD}.
+     * @param sparseThreshold register count threshold at which the {@link HLLType#SPARSE}
+     *        representation should be promoted to {@link HLLType#FULL}.
+     *        This must be greater than zero.
+     * @param type the type in the promotion hierarchy which this instance should
+     *        start at. This cannot be <code>null</code>.
      */
     /*package, for testing*/ HLL(final int log2m, final int regwidth, final int explicitThreshold, final int sparseThreshold, final HLLType type) {
         this.log2m = log2m;
@@ -305,26 +311,23 @@ public class HLL implements Cloneable {
 
     /**
      * @return the type in the promotion hierarchy of this instance. This will
-     * never be <code>null</code>.
+     *         never be <code>null</code>.
      */
-    public HLLType getType() {
-        return type;
-    }
+    public HLLType getType() { return type; }
 
     // ========================================================================
     // Add
-
     /**
      * Adds <code>rawValue</code> directly to the HLL.
      *
-     * @param rawValue the value to be added. It is very important that this
-     *                 value <em>already be hashed</em> with a strong (but not
-     *                 necessarily cryptographic) hash function. For instance, the
-     *                 Murmur3 implementation in
-     *                 <a href="http://guava-libraries.googlecode.com/git/guava/src/com/google/common/hash/Murmur3_128HashFunction.java">
-     *                 Google's Guava</a> library is an excellent hash function for this
-     *                 purpose and, for seeds greater than zero, matches the output
-     *                 of the hash provided in the PostgreSQL implementation.
+     * @param  rawValue the value to be added. It is very important that this
+     *         value <em>already be hashed</em> with a strong (but not
+     *         necessarily cryptographic) hash function. For instance, the
+     *         Murmur3 implementation in
+     *         <a href="http://guava-libraries.googlecode.com/git/guava/src/com/google/common/hash/Murmur3_128HashFunction.java">
+     *         Google's Guava</a> library is an excellent hash function for this
+     *         purpose and, for seeds greater than zero, matches the output
+     *         of the hash provided in the PostgreSQL implementation.
      */
     public void addRaw(final long rawValue) {
         switch (type) {
@@ -337,7 +340,7 @@ public class HLL implements Cloneable {
                     initializeStorage(HLLType.SPARSE);
                     addRawSparseProbabilistic(rawValue);
                 } else {
-                    initializeStorage(FULL);
+                    initializeStorage(HLLType.FULL);
                     addRawProbabilistic(rawValue);
                 }
                 return;
@@ -353,7 +356,7 @@ public class HLL implements Cloneable {
                             addRawSparseProbabilistic(value);
                         }
                     } else {
-                        initializeStorage(FULL);
+                        initializeStorage(HLLType.FULL);
                         for (final long value : explicitStorage) {
                             addRawProbabilistic(value);
                         }
@@ -384,7 +387,7 @@ public class HLL implements Cloneable {
     }
 
     private void promoteSparseToFull() {
-        initializeStorage(FULL);
+        initializeStorage(HLLType.FULL);
         for (final int registerIndex : sparseProbabilisticStorage.keySet()) {
             final byte registerValue = sparseProbabilisticStorage.get(registerIndex);
             probabilisticStorage.setMaxRegister(registerIndex, registerValue);
@@ -394,7 +397,6 @@ public class HLL implements Cloneable {
 
     // ------------------------------------------------------------------------
     // #addRaw(..) helpers
-
     /**
      * Adds the raw value to the {@link #sparseProbabilisticStorage}.
      * {@link #type} must be {@link HLLType#SPARSE}.
@@ -483,14 +485,13 @@ public class HLL implements Cloneable {
 
     // ------------------------------------------------------------------------
     // Storage helper
-
     /**
      * Initializes storage for the specified {@link HLLType} and changes the
      * instance's {@link #type}.
      *
      * @param type the {@link HLLType} to initialize storage for. This cannot be
-     *             <code>null</code> and must be an instantiable type. (For instance,
-     *             it cannot be {@link HLLType#UNDEFINED}.)
+     *        <code>null</code> and must be an instantiable type. (For instance,
+     *        it cannot be {@link HLLType#UNDEFINED}.)
      */
     private void initializeStorage(final HLLType type) {
         this.type = type;
@@ -515,7 +516,6 @@ public class HLL implements Cloneable {
 
     // ========================================================================
     // Cardinality
-
     /**
      * Computes the cardinality of the HLL.
      *
@@ -538,7 +538,6 @@ public class HLL implements Cloneable {
 
     // ------------------------------------------------------------------------
     // Cardinality helpers
-
     /**
      * Computes the exact cardinality value returned by the HLL algorithm when
      * represented as a {@link HLLType#SPARSE} HLL. Kept
@@ -608,11 +607,10 @@ public class HLL implements Cloneable {
 
     // ========================================================================
     // Clear
-
     /**
      * Clears the HLL. The HLL will have cardinality zero and will act as if no
      * elements have been added.<p/>
-     * <p>
+     *
      * NOTE: Unlike {@link #addRaw(long)}, <code>clear</code> does NOT handle
      * transitions between {@link HLLType}s - a probabilistic type will remain
      * probabilistic after being cleared.
@@ -637,12 +635,11 @@ public class HLL implements Cloneable {
 
     // ========================================================================
     // Union
-
     /**
      * Computes the union of HLLs and stores the result in this instance.
      *
      * @param other the other {@link HLL} instance to union into this one. This
-     *              cannot be <code>null</code>.
+     *        cannot be <code>null</code>.
      */
     public void union(final HLL other) {
         // TODO: verify HLLs are compatible
@@ -659,13 +656,12 @@ public class HLL implements Cloneable {
 
     // ------------------------------------------------------------------------
     // Union helpers
-
     /**
      * Computes the union of two HLLs, of different types, and stores the
      * result in this instance.
      *
      * @param other the other {@link HLL} instance to union into this one. This
-     *              cannot be <code>null</code>.
+     *        cannot be <code>null</code>.
      */
     /*package, for testing*/ void heterogenousUnion(final HLL other) {
         /*
@@ -698,7 +694,7 @@ public class HLL implements Cloneable {
                         if (!sparseOff) {
                             initializeStorage(HLLType.SPARSE);
                         } else {
-                            initializeStorage(FULL);
+                            initializeStorage(HLLType.FULL);
                         }
                         for (final long value : other.explicitStorage) {
                             addRaw(value);
@@ -714,7 +710,7 @@ public class HLL implements Cloneable {
                         type = HLLType.SPARSE;
                         sparseProbabilisticStorage = other.sparseProbabilisticStorage.clone();
                     } else {
-                        initializeStorage(FULL);
+                        initializeStorage(HLLType.FULL);
                         for (final int registerIndex : other.sparseProbabilisticStorage.keySet()) {
                             final byte registerValue = other.sparseProbabilisticStorage.get(registerIndex);
                             probabilisticStorage.setMaxRegister(registerIndex, registerValue);
@@ -726,7 +722,7 @@ public class HLL implements Cloneable {
                     // src:  FULL
                     // dest: EMPTY
 
-                    type = FULL;
+                    type = HLLType.FULL;
                     probabilisticStorage = other.probabilisticStorage.clone();
                     return;
                 }
@@ -755,14 +751,14 @@ public class HLL implements Cloneable {
                         type = HLLType.SPARSE;
                         sparseProbabilisticStorage = other.sparseProbabilisticStorage.clone();
                     } else {
-                        initializeStorage(FULL);
+                        initializeStorage(HLLType.FULL);
                         for (final int registerIndex : other.sparseProbabilisticStorage.keySet()) {
                             final byte registerValue = other.sparseProbabilisticStorage.get(registerIndex);
                             probabilisticStorage.setMaxRegister(registerIndex, registerValue);
                         }
                     }
                 } else /*source is HLLType.FULL*/ {
-                    type = FULL;
+                    type = HLLType.FULL;
                     probabilisticStorage = other.probabilisticStorage.clone();
                 }
                 for (final long value : explicitStorage) {
@@ -789,7 +785,7 @@ public class HLL implements Cloneable {
                     // clone of source is made and registers from the destination
                     // are merged into the clone.
 
-                    type = FULL;
+                    type = HLLType.FULL;
                     probabilisticStorage = other.probabilisticStorage.clone();
                     for (final int registerIndex : sparseProbabilisticStorage.keySet()) {
                         final byte registerValue = sparseProbabilisticStorage.get(registerIndex);
@@ -830,7 +826,7 @@ public class HLL implements Cloneable {
      * result in this instance.
      *
      * @param other the other {@link HLL} instance to union into this one. This
-     *              cannot be <code>null</code>.
+     *        cannot be <code>null</code>.
      */
     private void homogeneousUnion(final HLL other) {
         switch (type) {
@@ -854,7 +850,7 @@ public class HLL implements Cloneable {
 
                 // promotion, if necessary
                 if (sparseProbabilisticStorage.size() > sparseThreshold) {
-                    initializeStorage(FULL);
+                    initializeStorage(HLLType.FULL);
                     for (final int registerIndex : sparseProbabilisticStorage.keySet()) {
                         final byte registerValue = sparseProbabilisticStorage.get(registerIndex);
                         probabilisticStorage.setMaxRegister(registerIndex, registerValue);
@@ -875,13 +871,12 @@ public class HLL implements Cloneable {
 
     // ========================================================================
     // Serialization
-
     /**
      * Serializes the HLL to an array of bytes in correspondence with the format
      * of the default schema version, {@link SerializationUtil#DEFAULT_SCHEMA_VERSION}.
      *
      * @return the array of bytes representing the HLL. This will never be
-     * <code>null</code> or empty.
+     *         <code>null</code> or empty.
      */
     public byte[] toBytes() {
         return toBytes(SerializationUtil.DEFAULT_SCHEMA_VERSION);
@@ -891,9 +886,9 @@ public class HLL implements Cloneable {
      * Serializes the HLL to an array of bytes in correspondence with the format
      * of the specified schema version.
      *
-     * @param schemaVersion the schema version dictating the serialization format
+     * @param  schemaVersion the schema version dictating the serialization format
      * @return the array of bytes representing the HLL. This will never be
-     * <code>null</code> or empty.
+     *         <code>null</code> or empty.
      */
     public byte[] toBytes(final ISchemaVersion schemaVersion) {
         final byte[] bytes;
@@ -942,13 +937,13 @@ public class HLL implements Cloneable {
         }
 
         final IHLLMetadata metadata = new HLLMetadata(schemaVersion.schemaVersionNumber(),
-                type,
-                log2m,
-                regwidth,
-                (int) NumberUtil.log2(explicitThreshold),
-                explicitOff,
-                explicitAuto,
-                !sparseOff);
+                                                      type,
+                                                      log2m,
+                                                      regwidth,
+                                                      (int)NumberUtil.log2(explicitThreshold),
+                                                      explicitOff,
+                                                      explicitAuto,
+                                                      !sparseOff);
         schemaVersion.writeMetadata(bytes, metadata);
 
         return bytes;
@@ -958,8 +953,9 @@ public class HLL implements Cloneable {
      * Deserializes the HLL (in {@link #toBytes(ISchemaVersion)} format) serialized
      * into <code>bytes</code>.<p/>
      *
-     * @param bytes the serialized bytes of new HLL
+     * @param  bytes the serialized bytes of new HLL
      * @return the deserialized HLL. This will never be <code>null</code>.
+     *
      * @see #toBytes(ISchemaVersion)
      */
     public static HLL fromBytes(final byte[] bytes) {
