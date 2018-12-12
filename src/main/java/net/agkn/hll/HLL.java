@@ -16,31 +16,24 @@ package net.agkn.hll;
  * limitations under the License.
  */
 
-import java.util.Arrays;
-
 import it.unimi.dsi.fastutil.ints.Int2ByteOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
-import net.agkn.hll.serialization.HLLMetadata;
-import net.agkn.hll.serialization.IHLLMetadata;
-import net.agkn.hll.serialization.ISchemaVersion;
-import net.agkn.hll.serialization.IWordDeserializer;
-import net.agkn.hll.serialization.IWordSerializer;
-import net.agkn.hll.serialization.SerializationUtil;
-import net.agkn.hll.util.BitVector;
-import net.agkn.hll.util.BitUtil;
-import net.agkn.hll.util.HLLUtil;
-import net.agkn.hll.util.LongIterator;
-import net.agkn.hll.util.NumberUtil;
+import net.agkn.hll.serialization.*;
+import net.agkn.hll.util.*;
+
+import java.util.Arrays;
+
+import static net.agkn.hll.HLLType.FULL;
 
 /**
  * A probabilistic set of hashed <code>long</code> elements. Useful for computing
  * the approximate cardinality of a stream of data in very small storage.<p/>
- *
+ * <p>
  * A modified version of the <a href="http://algo.inria.fr/flajolet/Publications/FlFuGaMe07.pdf">
  * 'HyperLogLog' data structure and algorithm</a> is used, which combines both
  * probabilistic and non-probabilistic techniques to improve the accuracy and
  * storage requirements of the original algorithm.<p/>
- *
+ * <p>
  * More specifically, initializing and storing a new {@link HLL} will
  * allocate a sentinel value symbolizing the empty set ({@link HLLType#EMPTY}).
  * After adding the first few values, a sorted list of unique integers is
@@ -49,11 +42,11 @@ import net.agkn.hll.util.NumberUtil;
  * "promoted" to a "{@link HLLType#SPARSE}" map-based HyperLogLog structure.
  * Finally, when enough registers are set, the map-based HLL will be converted
  * to a bit-packed "{@link HLLType#FULL}" HyperLogLog structure.<p/>
- *
+ * <p>
  * This data structure is interoperable with the implementations found at:
  * <ul>
- *   <li><a href="https://github.com/aggregateknowledge/postgresql-hll">postgresql-hll</a>, and</li>
- *   <li><a href="https://github.com/aggregateknowledge/js-hll">js-hll</a></li>
+ * <li><a href="https://github.com/aggregateknowledge/postgresql-hll">postgresql-hll</a>, and</li>
+ * <li><a href="https://github.com/aggregateknowledge/js-hll">js-hll</a></li>
  * </ul>
  * when <a href="https://github.com/aggregateknowledge/postgresql-hll/blob/master/STORAGE.markdown">properly serialized</a>.
  *
@@ -144,48 +137,49 @@ public class HLL implements Cloneable {
     private final double largeEstimatorCutoff;
 
     // ========================================================================
+
     /**
      * NOTE: Arguments here are named and structured identically to those in the
-     *       PostgreSQL implementation, which can be found
-     *       <a href="https://github.com/aggregateknowledge/postgresql-hll/blob/master/README.markdown#explanation-of-parameters-and-tuning">here</a>.
+     * PostgreSQL implementation, which can be found
+     * <a href="https://github.com/aggregateknowledge/postgresql-hll/blob/master/README.markdown#explanation-of-parameters-and-tuning">here</a>.
      *
-     * @param log2m log-base-2 of the number of registers used in the HyperLogLog
-     *        algorithm. Must be at least 4 and at most 30.
-     * @param regwidth number of bits used per register in the HyperLogLog
-     *        algorithm. Must be at least 1 and at most 8.
+     * @param log2m     log-base-2 of the number of registers used in the HyperLogLog
+     *                  algorithm. Must be at least 4 and at most 30.
+     * @param regwidth  number of bits used per register in the HyperLogLog
+     *                  algorithm. Must be at least 1 and at most 8.
      * @param expthresh tunes when the {@link HLLType#EXPLICIT} to
-     *        {@link HLLType#SPARSE} promotion occurs,
-     *        based on the set's cardinality. Must be at least -1 and at most 18.
-     *        <table>
-     *        <thead><tr><th><code>expthresh</code> value</th><th>Meaning</th></tr></thead>
-     *        <tbody>
-     *        <tr>
-     *            <td>-1</td>
-     *            <td>Promote at whatever cutoff makes sense for optimal memory usage. ('auto' mode)</td>
-     *        </tr>
-     *        <tr>
-     *            <td>0</td>
-     *            <td>Skip <code>EXPLICIT</code> representation in hierarchy.</td>
-     *        </tr>
-     *        <tr>
-     *            <td>1-18</td>
-     *            <td>Promote at 2<sup>expthresh - 1</sup> cardinality</td>
-     *        </tr>
-     *        </tbody>
-     *        </table>
-     * @param sparseon Flag indicating if the {@link HLLType#SPARSE}
-     *        representation should be used.
-     * @param type the type in the promotion hierarchy which this instance should
-     *        start at. This cannot be <code>null</code>.
+     *                  {@link HLLType#SPARSE} promotion occurs,
+     *                  based on the set's cardinality. Must be at least -1 and at most 18.
+     *                  <table>
+     *                  <thead><tr><th><code>expthresh</code> value</th><th>Meaning</th></tr></thead>
+     *                  <tbody>
+     *                  <tr>
+     *                  <td>-1</td>
+     *                  <td>Promote at whatever cutoff makes sense for optimal memory usage. ('auto' mode)</td>
+     *                  </tr>
+     *                  <tr>
+     *                  <td>0</td>
+     *                  <td>Skip <code>EXPLICIT</code> representation in hierarchy.</td>
+     *                  </tr>
+     *                  <tr>
+     *                  <td>1-18</td>
+     *                  <td>Promote at 2<sup>expthresh - 1</sup> cardinality</td>
+     *                  </tr>
+     *                  </tbody>
+     *                  </table>
+     * @param sparseon  Flag indicating if the {@link HLLType#SPARSE}
+     *                  representation should be used.
+     * @param type      the type in the promotion hierarchy which this instance should
+     *                  start at. This cannot be <code>null</code>.
      */
     public HLL(final int log2m, final int regwidth, final int expthresh, final boolean sparseon, final HLLType type) {
         this.log2m = log2m;
-        if((log2m < MINIMUM_LOG2M_PARAM) || (log2m > MAXIMUM_LOG2M_PARAM)) {
+        if ((log2m < MINIMUM_LOG2M_PARAM) || (log2m > MAXIMUM_LOG2M_PARAM)) {
             throw new IllegalArgumentException("'log2m' must be at least " + MINIMUM_LOG2M_PARAM + " and at most " + MAXIMUM_LOG2M_PARAM + " (was: " + log2m + ")");
         }
 
         this.regwidth = regwidth;
-        if((regwidth < MINIMUM_REGWIDTH_PARAM) || (regwidth > MAXIMUM_REGWIDTH_PARAM)) {
+        if ((regwidth < MINIMUM_REGWIDTH_PARAM) || (regwidth > MAXIMUM_REGWIDTH_PARAM)) {
             throw new IllegalArgumentException("'regwidth' must be at least " + MINIMUM_REGWIDTH_PARAM + " and at most " + MAXIMUM_REGWIDTH_PARAM + " (was: " + regwidth + ")");
         }
 
@@ -197,24 +191,24 @@ public class HLL implements Cloneable {
         this.smallEstimatorCutoff = HLLUtil.smallEstimatorCutoff(m);
         this.largeEstimatorCutoff = HLLUtil.largeEstimatorCutoff(log2m, regwidth);
 
-        if(expthresh == -1) {
+        if (expthresh == -1) {
             this.explicitAuto = true;
             this.explicitOff = false;
 
             // NOTE:  This math matches the size calculation in the PostgreSQL impl.
-            final long fullRepresentationSize = (this.regwidth * (long)this.m + 7/*round up to next whole byte*/)/Byte.SIZE;
-            final int numLongs = (int)(fullRepresentationSize / 8/*integer division to round down*/);
+            final long fullRepresentationSize = (this.regwidth * (long) this.m + 7/*round up to next whole byte*/) / Byte.SIZE;
+            final int numLongs = (int) (fullRepresentationSize / 8/*integer division to round down*/);
 
-            if(numLongs > MAXIMUM_EXPLICIT_THRESHOLD) {
+            if (numLongs > MAXIMUM_EXPLICIT_THRESHOLD) {
                 this.explicitThreshold = MAXIMUM_EXPLICIT_THRESHOLD;
             } else {
                 this.explicitThreshold = numLongs;
             }
-        } else if(expthresh == 0) {
+        } else if (expthresh == 0) {
             this.explicitAuto = false;
             this.explicitOff = true;
             this.explicitThreshold = 0;
-        } else if((expthresh > 0) && (expthresh <= MAXIMUM_EXPTHRESH_PARAM)){
+        } else if ((expthresh > 0) && (expthresh <= MAXIMUM_EXPTHRESH_PARAM)) {
             this.explicitAuto = false;
             this.explicitOff = false;
             this.explicitThreshold = (1 << (expthresh - 1));
@@ -224,13 +218,13 @@ public class HLL implements Cloneable {
 
         this.shortWordLength = (regwidth + log2m);
         this.sparseOff = !sparseon;
-        if(this.sparseOff) {
+        if (this.sparseOff) {
             this.sparseThreshold = 0;
         } else {
             // TODO improve this cutoff to include the cost overhead of Java
             //      members/objects
             final int largestPow2LessThanCutoff =
-                    (int)NumberUtil.log2((this.m * this.regwidth) / this.shortWordLength);
+                    (int) NumberUtil.log2((this.m * this.regwidth) / this.shortWordLength);
             this.sparseThreshold = (1 << largestPow2LessThanCutoff);
         }
 
@@ -238,15 +232,14 @@ public class HLL implements Cloneable {
     }
 
     /**
-     *  Construct an empty HLL with the given {@code log2m} and {@code regwidth}.<p/>
+     * Construct an empty HLL with the given {@code log2m} and {@code regwidth}.<p/>
+     * <p>
+     * This is equivalent to calling <code>HLL(log2m, regwidth, -1, true, HLLType.EMPTY)</code>.
      *
-     *  This is equivalent to calling <code>HLL(log2m, regwidth, -1, true, HLLType.EMPTY)</code>.
-     *
-     * @param log2m log-base-2 of the number of registers used in the HyperLogLog
-     *        algorithm. Must be at least 4 and at most 30.
+     * @param log2m    log-base-2 of the number of registers used in the HyperLogLog
+     *                 algorithm. Must be at least 4 and at most 30.
      * @param regwidth number of bits used per register in the HyperLogLog
-     *        algorithm. Must be at least 1 and at most 8.
-     *
+     *                 algorithm. Must be at least 1 and at most 8.
      * @see #HLL(int, int, int, boolean, HLLType)
      */
     public HLL(final int log2m, final int regwidth) {
@@ -254,31 +247,32 @@ public class HLL implements Cloneable {
     }
 
     // -------------------------------------------------------------------------
+
     /**
      * Convenience constructor for testing. Assumes that both {@link HLLType#EXPLICIT}
      * and {@link HLLType#SPARSE} representations should be enabled.
      *
-     * @param log2m log-base-2 of the number of registers used in the HyperLogLog
-     *        algorithm. Must be at least 4 and at most 30.
-     * @param regwidth number of bits used per register in the HyperLogLog
-     *        algorithm. Must be at least 1 and at most 8.
+     * @param log2m             log-base-2 of the number of registers used in the HyperLogLog
+     *                          algorithm. Must be at least 4 and at most 30.
+     * @param regwidth          number of bits used per register in the HyperLogLog
+     *                          algorithm. Must be at least 1 and at most 8.
      * @param explicitThreshold cardinality threshold at which the {@link HLLType#EXPLICIT}
-     *        representation should be promoted to {@link HLLType#SPARSE}.
-     *        This must be greater than zero and less than or equal to {@value #MAXIMUM_EXPLICIT_THRESHOLD}.
-     * @param sparseThreshold register count threshold at which the {@link HLLType#SPARSE}
-     *        representation should be promoted to {@link HLLType#FULL}.
-     *        This must be greater than zero.
-     * @param type the type in the promotion hierarchy which this instance should
-     *        start at. This cannot be <code>null</code>.
+     *                          representation should be promoted to {@link HLLType#SPARSE}.
+     *                          This must be greater than zero and less than or equal to {@value #MAXIMUM_EXPLICIT_THRESHOLD}.
+     * @param sparseThreshold   register count threshold at which the {@link HLLType#SPARSE}
+     *                          representation should be promoted to {@link HLLType#FULL}.
+     *                          This must be greater than zero.
+     * @param type              the type in the promotion hierarchy which this instance should
+     *                          start at. This cannot be <code>null</code>.
      */
     /*package, for testing*/ HLL(final int log2m, final int regwidth, final int explicitThreshold, final int sparseThreshold, final HLLType type) {
         this.log2m = log2m;
-        if((log2m < MINIMUM_LOG2M_PARAM) || (log2m > MAXIMUM_LOG2M_PARAM)) {
+        if ((log2m < MINIMUM_LOG2M_PARAM) || (log2m > MAXIMUM_LOG2M_PARAM)) {
             throw new IllegalArgumentException("'log2m' must be at least " + MINIMUM_LOG2M_PARAM + " and at most " + MAXIMUM_LOG2M_PARAM + " (was: " + log2m + ")");
         }
 
         this.regwidth = regwidth;
-        if((regwidth < MINIMUM_REGWIDTH_PARAM) || (regwidth > MAXIMUM_REGWIDTH_PARAM)) {
+        if ((regwidth < MINIMUM_REGWIDTH_PARAM) || (regwidth > MAXIMUM_REGWIDTH_PARAM)) {
             throw new IllegalArgumentException("'regwidth' must be at least " + MINIMUM_REGWIDTH_PARAM + " and at most " + MAXIMUM_REGWIDTH_PARAM + " (was: " + regwidth + ")");
         }
 
@@ -293,7 +287,7 @@ public class HLL implements Cloneable {
         this.explicitAuto = false;
         this.explicitOff = false;
         this.explicitThreshold = explicitThreshold;
-        if((explicitThreshold < 1) || (explicitThreshold > MAXIMUM_EXPLICIT_THRESHOLD)) {
+        if ((explicitThreshold < 1) || (explicitThreshold > MAXIMUM_EXPLICIT_THRESHOLD)) {
             throw new IllegalArgumentException("'explicitThreshold' must be at least 1 and at most " + MAXIMUM_EXPLICIT_THRESHOLD + " (was: " + explicitThreshold + ")");
         }
 
@@ -304,38 +298,46 @@ public class HLL implements Cloneable {
         initializeStorage(type);
     }
 
+    public int getLog2m() {
+        return log2m;
+    }
+
+
     /**
      * @return the type in the promotion hierarchy of this instance. This will
-     *         never be <code>null</code>.
+     * never be <code>null</code>.
      */
-    public HLLType getType() { return type; }
+    public HLLType getType() {
+        return type;
+    }
 
     // ========================================================================
     // Add
+
     /**
      * Adds <code>rawValue</code> directly to the HLL.
      *
-     * @param  rawValue the value to be added. It is very important that this
-     *         value <em>already be hashed</em> with a strong (but not
-     *         necessarily cryptographic) hash function. For instance, the
-     *         Murmur3 implementation in
-     *         <a href="http://guava-libraries.googlecode.com/git/guava/src/com/google/common/hash/Murmur3_128HashFunction.java">
-     *         Google's Guava</a> library is an excellent hash function for this
-     *         purpose and, for seeds greater than zero, matches the output
-     *         of the hash provided in the PostgreSQL implementation.
+     * @param rawValue the value to be added. It is very important that this
+     *                 value <em>already be hashed</em> with a strong (but not
+     *                 necessarily cryptographic) hash function. For instance, the
+     *                 Murmur3 implementation in
+     *                 <a href="http://guava-libraries.googlecode.com/git/guava/src/com/google/common/hash/Murmur3_128HashFunction.java">
+     *                 Google's Guava</a> library is an excellent hash function for this
+     *                 purpose and, for seeds greater than zero, matches the output
+     *                 of the hash provided in the PostgreSQL implementation.
      */
     public void addRaw(final long rawValue) {
-        switch(type) {
+        switch (type) {
             case EMPTY: {
                 // NOTE:  EMPTY type is always promoted on #addRaw()
-                if(explicitThreshold > 0) {
+                if (explicitThreshold > 0) {
                     initializeStorage(HLLType.EXPLICIT);
                     explicitStorage.add(rawValue);
-                } else if(!sparseOff) {
+                } else if (!sparseOff) {
                     initializeStorage(HLLType.SPARSE);
                     addRawSparseProbabilistic(rawValue);
                 } else {
-                    initializeStorage(HLLType.FULL);
+                    initializeStorage(FULL);
                     addRawProbabilistic(rawValue);
                 }
                 return;
@@ -344,15 +346,15 @@ public class HLL implements Cloneable {
                 explicitStorage.add(rawValue);
 
                 // promotion, if necessary
-                if(explicitStorage.size() > explicitThreshold) {
-                    if(!sparseOff) {
+                if (explicitStorage.size() > explicitThreshold) {
+                    if (!sparseOff) {
                         initializeStorage(HLLType.SPARSE);
-                        for(final long value : explicitStorage) {
+                        for (final long value : explicitStorage) {
                             addRawSparseProbabilistic(value);
                         }
                     } else {
-                        initializeStorage(HLLType.FULL);
-                        for(final long value : explicitStorage) {
+                        initializeStorage(FULL);
+                        for (final long value : explicitStorage) {
                             addRawProbabilistic(value);
                         }
                     }
@@ -364,14 +366,7 @@ public class HLL implements Cloneable {
                 addRawSparseProbabilistic(rawValue);
 
                 // promotion, if necessary
-                if(sparseProbabilisticStorage.size() > sparseThreshold) {
-                    initializeStorage(HLLType.FULL);
-                    for(final int registerIndex : sparseProbabilisticStorage.keySet()) {
-                        final byte registerValue = sparseProbabilisticStorage.get(registerIndex);
-                        probabilisticStorage.setMaxRegister(registerIndex, registerValue);
-                    }
-                    sparseProbabilisticStorage = null;
-                }
+                manageSparsePromotion();
                 return;
             }
             case FULL:
@@ -382,8 +377,24 @@ public class HLL implements Cloneable {
         }
     }
 
+    private void manageSparsePromotion() {
+        if (sparseProbabilisticStorage.size() > sparseThreshold) {
+            promoteSparseToFull();
+        }
+    }
+
+    private void promoteSparseToFull() {
+        initializeStorage(FULL);
+        for (final int registerIndex : sparseProbabilisticStorage.keySet()) {
+            final byte registerValue = sparseProbabilisticStorage.get(registerIndex);
+            probabilisticStorage.setMaxRegister(registerIndex, registerValue);
+        }
+        sparseProbabilisticStorage = null;
+    }
+
     // ------------------------------------------------------------------------
     // #addRaw(..) helpers
+
     /**
      * Adds the raw value to the {@link #sparseProbabilisticStorage}.
      * {@link #type} must be {@link HLLType#SPARSE}.
@@ -401,14 +412,14 @@ public class HLL implements Cloneable {
         final long substreamValue = (rawValue >>> log2m);
         final byte p_w;
 
-        if(substreamValue == 0L) {
+        if (substreamValue == 0L) {
             // The paper does not cover p(0x0), so the special value 0 is used.
             // 0 is the original initialization value of the registers, so by
             // doing this the multiset simply ignores it. This is acceptable
             // because the probability is 1/(2^(2^registerSizeInBits)).
             p_w = 0;
         } else {
-            p_w = (byte)(1 + BitUtil.leastSignificantBit(substreamValue| pwMaxMask));
+            p_w = (byte) (1 + BitUtil.leastSignificantBit(substreamValue | pwMaxMask));
         }
 
         // Short-circuit if the register is being set to zero, since algorithmically
@@ -416,15 +427,15 @@ public class HLL implements Cloneable {
         // stored to save memory. (The very reason this sparse implementation
         // exists.) If a register is set to zero it will break the #algorithmCardinality
         // code.
-        if(p_w == 0) {
+        if (p_w == 0) {
             return;
         }
 
         // NOTE:  no +1 as in paper since 0-based indexing
-        final int j = (int)(rawValue & mBitsMask);
+        final int j = (int) (rawValue & mBitsMask);
 
         final byte currentValue = sparseProbabilisticStorage.get(j);
-        if(p_w > currentValue) {
+        if (p_w > currentValue) {
             sparseProbabilisticStorage.put(j, p_w);
         }
     }
@@ -453,7 +464,7 @@ public class HLL implements Cloneable {
             // because the probability is 1/(2^(2^registerSizeInBits)).
             p_w = 0;
         } else {
-            p_w = (byte)(1 + BitUtil.leastSignificantBit(substreamValue| pwMaxMask));
+            p_w = (byte) (1 + BitUtil.leastSignificantBit(substreamValue | pwMaxMask));
         }
 
         // Short-circuit if the register is being set to zero, since algorithmically
@@ -461,29 +472,29 @@ public class HLL implements Cloneable {
         // stored to save memory. (The very reason this sparse implementation
         // exists.) If a register is set to zero it will break the #algorithmCardinality
         // code.
-        if(p_w == 0) {
+        if (p_w == 0) {
             return;
         }
 
         // NOTE:  no +1 as in paper since 0-based indexing
-        final int j = (int)(rawValue & mBitsMask);
-
+        final int j = (int) (rawValue & mBitsMask);
         probabilisticStorage.setMaxRegister(j, p_w);
     }
 
     // ------------------------------------------------------------------------
     // Storage helper
+
     /**
      * Initializes storage for the specified {@link HLLType} and changes the
      * instance's {@link #type}.
      *
      * @param type the {@link HLLType} to initialize storage for. This cannot be
-     *        <code>null</code> and must be an instantiable type. (For instance,
-     *        it cannot be {@link HLLType#UNDEFINED}.)
+     *             <code>null</code> and must be an instantiable type. (For instance,
+     *             it cannot be {@link HLLType#UNDEFINED}.)
      */
     private void initializeStorage(final HLLType type) {
         this.type = type;
-        switch(type) {
+        switch (type) {
             case EMPTY:
                 // nothing to be done
                 break;
@@ -492,6 +503,7 @@ public class HLL implements Cloneable {
                 break;
             case SPARSE:
                 this.sparseProbabilisticStorage = new Int2ByteOpenHashMap();
+                this.sparseProbabilisticStorage.defaultReturnValue((byte) 0);
                 break;
             case FULL:
                 this.probabilisticStorage = new BitVector(regwidth, m);
@@ -503,21 +515,22 @@ public class HLL implements Cloneable {
 
     // ========================================================================
     // Cardinality
+
     /**
      * Computes the cardinality of the HLL.
      *
      * @return the cardinality of HLL. This will never be negative.
      */
     public long cardinality() {
-        switch(type) {
+        switch (type) {
             case EMPTY:
                 return 0/*by definition*/;
             case EXPLICIT:
                 return explicitStorage.size();
             case SPARSE:
-                return (long)Math.ceil(sparseProbabilisticAlgorithmCardinality());
+                return (long) Math.ceil(sparseProbabilisticAlgorithmCardinality());
             case FULL:
-                return (long)Math.ceil(fullProbabilisticAlgorithmCardinality());
+                return (long) Math.ceil(fullProbabilisticAlgorithmCardinality());
             default:
                 throw new RuntimeException("Unsupported HLL type " + type);
         }
@@ -525,6 +538,7 @@ public class HLL implements Cloneable {
 
     // ------------------------------------------------------------------------
     // Cardinality helpers
+
     /**
      * Computes the exact cardinality value returned by the HLL algorithm when
      * represented as a {@link HLLType#SPARSE} HLL. Kept
@@ -540,18 +554,18 @@ public class HLL implements Cloneable {
         // 'j'th register value
         double sum = 0;
         int numberOfZeroes = 0/*"V" in the paper*/;
-        for(int j=0; j<m; j++) {
+        for (int j = 0; j < m; j++) {
             final long register = sparseProbabilisticStorage.get(j);
 
             sum += 1.0 / (1L << register);
-            if(register == 0L) numberOfZeroes++;
+            if (register == 0L) numberOfZeroes++;
         }
 
         // apply the estimate and correction to the indicator function
         final double estimator = alphaMSquared / sum;
-        if((numberOfZeroes != 0) && (estimator < smallEstimatorCutoff)) {
+        if ((numberOfZeroes != 0) && (estimator < smallEstimatorCutoff)) {
             return HLLUtil.smallEstimator(m, numberOfZeroes);
-        } else if(estimator <= largeEstimatorCutoff) {
+        } else if (estimator <= largeEstimatorCutoff) {
             return estimator;
         } else {
             return HLLUtil.largeEstimator(log2m, regwidth, estimator);
@@ -574,18 +588,18 @@ public class HLL implements Cloneable {
         double sum = 0;
         int numberOfZeroes = 0/*"V" in the paper*/;
         final LongIterator iterator = probabilisticStorage.registerIterator();
-        while(iterator.hasNext()) {
+        while (iterator.hasNext()) {
             final long register = iterator.next();
 
             sum += 1.0 / (1L << register);
-            if(register == 0L) numberOfZeroes++;
+            if (register == 0L) numberOfZeroes++;
         }
 
         // apply the estimate and correction to the indicator function
         final double estimator = alphaMSquared / sum;
-        if((numberOfZeroes != 0) && (estimator < smallEstimatorCutoff)) {
+        if ((numberOfZeroes != 0) && (estimator < smallEstimatorCutoff)) {
             return HLLUtil.smallEstimator(m, numberOfZeroes);
-        } else if(estimator <= largeEstimatorCutoff) {
+        } else if (estimator <= largeEstimatorCutoff) {
             return estimator;
         } else {
             return HLLUtil.largeEstimator(log2m, regwidth, estimator);
@@ -594,16 +608,17 @@ public class HLL implements Cloneable {
 
     // ========================================================================
     // Clear
+
     /**
      * Clears the HLL. The HLL will have cardinality zero and will act as if no
      * elements have been added.<p/>
-     *
+     * <p>
      * NOTE: Unlike {@link #addRaw(long)}, <code>clear</code> does NOT handle
      * transitions between {@link HLLType}s - a probabilistic type will remain
      * probabilistic after being cleared.
      */
     public void clear() {
-        switch(type) {
+        switch (type) {
             case EMPTY:
                 return /*do nothing*/;
             case EXPLICIT:
@@ -622,17 +637,18 @@ public class HLL implements Cloneable {
 
     // ========================================================================
     // Union
+
     /**
      * Computes the union of HLLs and stores the result in this instance.
      *
      * @param other the other {@link HLL} instance to union into this one. This
-     *        cannot be <code>null</code>.
+     *              cannot be <code>null</code>.
      */
     public void union(final HLL other) {
         // TODO: verify HLLs are compatible
         final HLLType otherType = other.getType();
 
-        if(type.equals(otherType)) {
+        if (type.equals(otherType)) {
             homogeneousUnion(other);
             return;
         } else {
@@ -643,12 +659,13 @@ public class HLL implements Cloneable {
 
     // ------------------------------------------------------------------------
     // Union helpers
+
     /**
      * Computes the union of two HLLs, of different types, and stores the
      * result in this instance.
      *
      * @param other the other {@link HLL} instance to union into this one. This
-     *        cannot be <code>null</code>.
+     *              cannot be <code>null</code>.
      */
     /*package, for testing*/ void heterogenousUnion(final HLL other) {
         /*
@@ -665,25 +682,25 @@ public class HLL implements Cloneable {
 
         // ....................................................................
         // Union with an EMPTY
-        if(HLLType.EMPTY.equals(type)) {
+        if (HLLType.EMPTY.equals(type)) {
             // NOTE:  The union of empty with non-empty HLL is just a
             //        clone of the non-empty.
 
-            switch(other.getType()) {
+            switch (other.getType()) {
                 case EXPLICIT: {
                     // src:  EXPLICIT
                     // dest: EMPTY
 
-                    if(other.explicitStorage.size() <= explicitThreshold) {
+                    if (other.explicitStorage.size() <= explicitThreshold) {
                         type = HLLType.EXPLICIT;
                         explicitStorage = other.explicitStorage.clone();
                     } else {
-                        if(!sparseOff) {
+                        if (!sparseOff) {
                             initializeStorage(HLLType.SPARSE);
                         } else {
-                            initializeStorage(HLLType.FULL);
+                            initializeStorage(FULL);
                         }
-                        for(final long value : other.explicitStorage) {
+                        for (final long value : other.explicitStorage) {
                             addRaw(value);
                         }
                     }
@@ -693,12 +710,12 @@ public class HLL implements Cloneable {
                     // src:  SPARSE
                     // dest: EMPTY
 
-                    if(!sparseOff) {
+                    if (!sparseOff) {
                         type = HLLType.SPARSE;
                         sparseProbabilisticStorage = other.sparseProbabilisticStorage.clone();
                     } else {
-                        initializeStorage(HLLType.FULL);
-                        for(final int registerIndex : other.sparseProbabilisticStorage.keySet()) {
+                        initializeStorage(FULL);
+                        for (final int registerIndex : other.sparseProbabilisticStorage.keySet()) {
                             final byte registerValue = other.sparseProbabilisticStorage.get(registerIndex);
                             probabilisticStorage.setMaxRegister(registerIndex, registerValue);
                         }
@@ -709,7 +726,7 @@ public class HLL implements Cloneable {
                     // src:  FULL
                     // dest: EMPTY
 
-                    type = HLLType.FULL;
+                    type = FULL;
                     probabilisticStorage = other.probabilisticStorage.clone();
                     return;
                 }
@@ -721,7 +738,7 @@ public class HLL implements Cloneable {
 
         // ....................................................................
         // NOTE: Since EMPTY is handled above, the HLLs are non-EMPTY below
-        switch(type) {
+        switch (type) {
             case EXPLICIT: {
                 // src:  FULL/SPARSE
                 // dest: EXPLICIT
@@ -733,34 +750,34 @@ public class HLL implements Cloneable {
                 // Determine source and destination storage.
                 // NOTE:  destination storage may change through promotion if
                 //        source is SPARSE.
-                if(HLLType.SPARSE.equals(other.getType())) {
-                    if(!sparseOff) {
+                if (HLLType.SPARSE.equals(other.getType())) {
+                    if (!sparseOff) {
                         type = HLLType.SPARSE;
                         sparseProbabilisticStorage = other.sparseProbabilisticStorage.clone();
                     } else {
-                        initializeStorage(HLLType.FULL);
-                        for(final int registerIndex : other.sparseProbabilisticStorage.keySet()) {
+                        initializeStorage(FULL);
+                        for (final int registerIndex : other.sparseProbabilisticStorage.keySet()) {
                             final byte registerValue = other.sparseProbabilisticStorage.get(registerIndex);
                             probabilisticStorage.setMaxRegister(registerIndex, registerValue);
                         }
                     }
                 } else /*source is HLLType.FULL*/ {
-                    type = HLLType.FULL;
+                    type = FULL;
                     probabilisticStorage = other.probabilisticStorage.clone();
                 }
-                for(final long value : explicitStorage) {
+                for (final long value : explicitStorage) {
                     addRaw(value);
                 }
                 explicitStorage = null;
                 return;
             }
             case SPARSE: {
-                if(HLLType.EXPLICIT.equals(other.getType())) {
+                if (HLLType.EXPLICIT.equals(other.getType())) {
                     // src:  EXPLICIT
                     // dest: SPARSE
                     // Add the raw values from the source to the destination.
 
-                    for(final long value : other.explicitStorage) {
+                    for (final long value : other.explicitStorage) {
                         addRaw(value);
                     }
                     // NOTE:  addRaw will handle promotion cleanup
@@ -772,9 +789,9 @@ public class HLL implements Cloneable {
                     // clone of source is made and registers from the destination
                     // are merged into the clone.
 
-                    type = HLLType.FULL;
+                    type = FULL;
                     probabilisticStorage = other.probabilisticStorage.clone();
-                    for(final int registerIndex : sparseProbabilisticStorage.keySet()) {
+                    for (final int registerIndex : sparseProbabilisticStorage.keySet()) {
                         final byte registerValue = sparseProbabilisticStorage.get(registerIndex);
                         probabilisticStorage.setMaxRegister(registerIndex, registerValue);
                     }
@@ -783,13 +800,13 @@ public class HLL implements Cloneable {
                 return;
             }
             default/*destination is HLLType.FULL*/: {
-                if(HLLType.EXPLICIT.equals(other.getType())) {
+                if (HLLType.EXPLICIT.equals(other.getType())) {
                     // src:  EXPLICIT
                     // dest: FULL
                     // Add the raw values from the source to the destination.
                     // Promotion is not possible, so don't bother checking.
 
-                    for(final long value : other.explicitStorage) {
+                    for (final long value : other.explicitStorage) {
                         addRaw(value);
                     }
                 } else /*source is HLLType.SPARSE*/ {
@@ -798,7 +815,7 @@ public class HLL implements Cloneable {
                     // Merge the registers from the source into the destination.
                     // Promotion is not possible, so don't bother checking.
 
-                    for(final int registerIndex : other.sparseProbabilisticStorage.keySet()) {
+                    for (final int registerIndex : other.sparseProbabilisticStorage.keySet()) {
                         final byte registerValue = other.sparseProbabilisticStorage.get(registerIndex);
                         probabilisticStorage.setMaxRegister(registerIndex, registerValue);
                     }
@@ -813,57 +830,58 @@ public class HLL implements Cloneable {
      * result in this instance.
      *
      * @param other the other {@link HLL} instance to union into this one. This
-     *        cannot be <code>null</code>.
+     *              cannot be <code>null</code>.
      */
     private void homogeneousUnion(final HLL other) {
-        switch(type) {
+        switch (type) {
             case EMPTY:
                 // union of empty and empty is empty
                 return;
-        case EXPLICIT:
-            for(final long value : other.explicitStorage) {
-                addRaw(value);
-            }
-            // NOTE:  #addRaw() will handle promotion, if necessary
-            return;
-        case SPARSE:
-            for(final int registerIndex : other.sparseProbabilisticStorage.keySet()) {
-                final byte registerValue = other.sparseProbabilisticStorage.get(registerIndex);
-                final byte currentRegisterValue = sparseProbabilisticStorage.get(registerIndex);
-                if(registerValue > currentRegisterValue) {
-                    sparseProbabilisticStorage.put(registerIndex, registerValue);
+            case EXPLICIT:
+                for (final long value : other.explicitStorage) {
+                    addRaw(value);
                 }
-            }
+                // NOTE:  #addRaw() will handle promotion, if necessary
+                return;
+            case SPARSE:
+                for (final int registerIndex : other.sparseProbabilisticStorage.keySet()) {
+                    final byte registerValue = other.sparseProbabilisticStorage.get(registerIndex);
+                    final byte currentRegisterValue = sparseProbabilisticStorage.get(registerIndex);
+                    if (registerValue > currentRegisterValue) {
+                        sparseProbabilisticStorage.put(registerIndex, registerValue);
+                    }
+                }
 
-            // promotion, if necessary
-            if(sparseProbabilisticStorage.size() > sparseThreshold) {
-                initializeStorage(HLLType.FULL);
-                for(final int registerIndex : sparseProbabilisticStorage.keySet()) {
-                    final byte registerValue = sparseProbabilisticStorage.get(registerIndex);
-                    probabilisticStorage.setMaxRegister(registerIndex, registerValue);
+                // promotion, if necessary
+                if (sparseProbabilisticStorage.size() > sparseThreshold) {
+                    initializeStorage(FULL);
+                    for (final int registerIndex : sparseProbabilisticStorage.keySet()) {
+                        final byte registerValue = sparseProbabilisticStorage.get(registerIndex);
+                        probabilisticStorage.setMaxRegister(registerIndex, registerValue);
+                    }
+                    sparseProbabilisticStorage = null;
                 }
-                sparseProbabilisticStorage = null;
-            }
-            return;
-        case FULL:
-            for(int i=0; i<m; i++) {
-                final long registerValue = other.probabilisticStorage.getRegister(i);
-                probabilisticStorage.setMaxRegister(i, registerValue);
-            }
-            return;
-        default:
+                return;
+            case FULL:
+                for (int i = 0; i < m; i++) {
+                    final long registerValue = other.probabilisticStorage.getRegister(i);
+                    probabilisticStorage.setMaxRegister(i, registerValue);
+                }
+                return;
+            default:
                 throw new RuntimeException("Unsupported HLL type " + type);
         }
     }
 
     // ========================================================================
     // Serialization
+
     /**
      * Serializes the HLL to an array of bytes in correspondence with the format
      * of the default schema version, {@link SerializationUtil#DEFAULT_SCHEMA_VERSION}.
      *
      * @return the array of bytes representing the HLL. This will never be
-     *         <code>null</code> or empty.
+     * <code>null</code> or empty.
      */
     public byte[] toBytes() {
         return toBytes(SerializationUtil.DEFAULT_SCHEMA_VERSION);
@@ -873,23 +891,23 @@ public class HLL implements Cloneable {
      * Serializes the HLL to an array of bytes in correspondence with the format
      * of the specified schema version.
      *
-     * @param  schemaVersion the schema version dictating the serialization format
+     * @param schemaVersion the schema version dictating the serialization format
      * @return the array of bytes representing the HLL. This will never be
-     *         <code>null</code> or empty.
+     * <code>null</code> or empty.
      */
     public byte[] toBytes(final ISchemaVersion schemaVersion) {
         final byte[] bytes;
-        switch(type) {
+        switch (type) {
             case EMPTY:
                 bytes = new byte[schemaVersion.paddingBytes(type)];
                 break;
             case EXPLICIT: {
                 final IWordSerializer serializer =
-                    schemaVersion.getSerializer(type, Long.SIZE, explicitStorage.size());
+                        schemaVersion.getSerializer(type, Long.SIZE, explicitStorage.size());
 
                 final long[] values = explicitStorage.toLongArray();
                 Arrays.sort(values);
-                for(final long value : values) {
+                for (final long value : values) {
                     serializer.writeWord(value);
                 }
 
@@ -902,7 +920,7 @@ public class HLL implements Cloneable {
 
                 final int[] indices = sparseProbabilisticStorage.keySet().toIntArray();
                 Arrays.sort(indices);
-                for(final int registerIndex : indices) {
+                for (final int registerIndex : indices) {
                     final long registerValue = sparseProbabilisticStorage.get(registerIndex);
                     // pack index and value into "short word"
                     final long shortWord = ((registerIndex << regwidth) | registerValue);
@@ -924,13 +942,13 @@ public class HLL implements Cloneable {
         }
 
         final IHLLMetadata metadata = new HLLMetadata(schemaVersion.schemaVersionNumber(),
-                                                      type,
-                                                      log2m,
-                                                      regwidth,
-                                                      (int)NumberUtil.log2(explicitThreshold),
-                                                      explicitOff,
-                                                      explicitAuto,
-                                                      !sparseOff);
+                type,
+                log2m,
+                regwidth,
+                (int) NumberUtil.log2(explicitThreshold),
+                explicitOff,
+                explicitAuto,
+                !sparseOff);
         schemaVersion.writeMetadata(bytes, metadata);
 
         return bytes;
@@ -940,9 +958,8 @@ public class HLL implements Cloneable {
      * Deserializes the HLL (in {@link #toBytes(ISchemaVersion)} format) serialized
      * into <code>bytes</code>.<p/>
      *
-     * @param  bytes the serialized bytes of new HLL
+     * @param bytes the serialized bytes of new HLL
      * @return the deserialized HLL. This will never be <code>null</code>.
-     *
      * @see #toBytes(ISchemaVersion)
      */
     public static HLL fromBytes(final byte[] bytes) {
@@ -955,9 +972,9 @@ public class HLL implements Cloneable {
         final boolean sparseon = metadata.sparseEnabled();
 
         final int expthresh;
-        if(metadata.explicitAuto()) {
+        if (metadata.explicitAuto()) {
             expthresh = -1;
-        } else if(metadata.explicitOff()) {
+        } else if (metadata.explicitOff()) {
             expthresh = 0;
         } else {
             // NOTE: take into account that the postgres-compatible constructor
@@ -968,12 +985,12 @@ public class HLL implements Cloneable {
         final HLL hll = new HLL(log2m, regwidth, expthresh, sparseon, type);
 
         // Short-circuit on empty, which needs no other deserialization.
-        if(HLLType.EMPTY.equals(type)) {
+        if (HLLType.EMPTY.equals(type)) {
             return hll;
         }
 
         final int wordLength;
-        switch(type) {
+        switch (type) {
             case EXPLICIT:
                 wordLength = Long.SIZE;
                 break;
@@ -989,13 +1006,13 @@ public class HLL implements Cloneable {
 
         final IWordDeserializer deserializer =
                 schemaVersion.getDeserializer(type, wordLength, bytes);
-        switch(type) {
+        switch (type) {
             case EXPLICIT:
                 // NOTE:  This should not exceed expthresh and this will always
                 //        be exactly the number of words that were encoded,
                 //        because the word length is at least a byte wide.
                 // SEE:   IWordDeserializer#totalWordCount()
-                for(int i=0; i<deserializer.totalWordCount(); i++) {
+                for (int i = 0; i < deserializer.totalWordCount(); i++) {
                     hll.explicitStorage.add(deserializer.readWord());
                 }
                 break;
@@ -1006,12 +1023,12 @@ public class HLL implements Cloneable {
                 //        registers read. However, this is not relevant as the
                 //        extra registers will be all zeroes, which are ignored
                 //        in the sparse representation.
-                for(int i=0; i<deserializer.totalWordCount(); i++) {
+                for (int i = 0; i < deserializer.totalWordCount(); i++) {
                     final long shortWord = deserializer.readWord();
-                    final byte registerValue = (byte)(shortWord & hll.valueMask);
+                    final byte registerValue = (byte) (shortWord & hll.valueMask);
                     // Only set non-zero registers.
                     if (registerValue != 0) {
-                        hll.sparseProbabilisticStorage.put((int)(shortWord >>> hll.regwidth), registerValue);
+                        hll.sparseProbabilisticStorage.put((int) (shortWord >>> hll.regwidth), registerValue);
                     }
                 }
                 break;
@@ -1022,7 +1039,7 @@ public class HLL implements Cloneable {
                 //        may be larger than regwidth, causing an extra register
                 //        to be read.
                 // SEE: IWordDeserializer#totalWordCount()
-                for(long i=0; i<hll.m; i++) {
+                for (long i = 0; i < hll.m; i++) {
                     hll.probabilisticStorage.setRegister(i, deserializer.readWord());
                 }
                 break;
@@ -1045,22 +1062,8 @@ public class HLL implements Cloneable {
         //       the expthresh parameter and create a new HLL with the public
         //       constructor.
         // TODO: add a more sensible constructor to make this less obfuscated
-        final int copyExpthresh;
-        if(explicitAuto) {
-            copyExpthresh = -1;
-        } else if(explicitOff) {
-            copyExpthresh = 0;
-        } else {
-            // explicitThreshold is defined as:
-            //
-            //      this.explicitThreshold = (1 << (expthresh - 1));
-            //
-            // Since explicitThreshold is a power of two and only has a single
-            // bit set, finding the LSB is the same as finding the inverse
-            copyExpthresh = BitUtil.leastSignificantBit(explicitThreshold) + 1;
-        }
-        final HLL copy = new HLL(log2m, regwidth, copyExpthresh, !sparseOff/*sparseOn*/, type);
-        switch(type) {
+        final HLL copy = new HLL(log2m, regwidth, retrieveExpThresh(), !sparseOff/*sparseOn*/, type);
+        switch (type) {
             case EMPTY:
                 // nothing to be done
                 break;
@@ -1078,4 +1081,92 @@ public class HLL implements Cloneable {
         }
         return copy;
     }
+
+    /**
+     * @param newLog2m
+     * @return folded copy of this HLL with new log2m param
+     */
+    public HLL folded(int newLog2m) {
+        if (newLog2m > this.log2m || newLog2m < MINIMUM_LOG2M_PARAM) {
+            throw new IllegalArgumentException("'newLog2m' must be at least " +
+                    MINIMUM_LOG2M_PARAM + " and at most 'this.log2m': " + this.log2m +
+                    " (was: " + newLog2m + ")");
+        }
+        HLL copyWithNewM = new HLL(newLog2m, regwidth, retrieveExpThresh(), !sparseOff/*sparseOn*/, type);
+        switch (type) {
+            case EMPTY:
+                return copyWithNewM;
+            case EXPLICIT:
+                for (long rawValue : this.explicitStorage) {
+                    copyWithNewM.addRaw(rawValue);
+                }
+                return copyWithNewM;
+            case FULL:
+            case SPARSE:
+                copyFoldedRegValues(this, copyWithNewM);
+                return copyWithNewM;
+            default:
+                throw new RuntimeException("Unsupported HLL type " + type);
+        }
+    }
+
+    private int retrieveExpThresh() {
+        if (explicitAuto) {
+            return -1;
+        } else if (explicitOff) {
+            return 0;
+        } else {
+            // explicitThreshold is defined as:
+            //
+            //      this.explicitThreshold = (1 << (expthresh - 1));
+            //
+            // Since explicitThreshold is a power of two and only has a single
+            // bit set, finding the LSB is the same as finding the inverse
+            return BitUtil.leastSignificantBit(explicitThreshold) + 1;
+        }
+    }
+
+    private byte getRegister(int index) {
+        switch (this.type) {
+            case FULL:
+                return (byte) probabilisticStorage.getRegister(index);
+            case SPARSE:
+                return sparseProbabilisticStorage.get(index);
+            default:
+                throw new IllegalStateException("Wrong type " + this.type);
+        }
+    }
+
+    private void setRegister(int index, byte value) {
+        if (value == 0) return;
+        switch (this.type) {
+            case FULL:
+                probabilisticStorage.setRegister(index, value);
+                break;
+            case SPARSE:
+                sparseProbabilisticStorage.put(index, value);
+                manageSparsePromotion();
+                break;
+            default:
+                throw new IllegalStateException("Wrong type " + this.type);
+        }
+    }
+
+    private static void copyFoldedRegValues(HLL source, HLL target) {
+        for (int i = 0; i < source.m; ++i) {
+            byte iRegVal = source.getRegister(i);
+            if (iRegVal == 0) {
+                continue;
+            }
+            if (i < target.m) {
+                target.setRegister(i, (byte) (iRegVal + source.log2m - target.log2m));
+            } else {
+                target.addRaw(i);
+            }
+        }
+    }
+
 }
+
+
+
